@@ -64,6 +64,8 @@ app.config["MAX_ROLL"] = 20
 app.config["CACHE_TYPE"] = "SimpleCache"
 app.config["HOST_ADDRESS"] = ""
 app.config["ASSET_RIGHTS"] = False
+app.config["ROOM_PORT_MIN"] = 49152
+app.config["ROOM_PORT_MAX"] = 65535
 
 cache = Cache()
 Compress(app)
