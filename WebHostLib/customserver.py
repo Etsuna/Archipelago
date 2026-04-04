@@ -183,7 +183,9 @@ class WebHostContext(Context):
 
 
 def get_random_port():
-
+    minimum = int(app.config.get("ROOM_PORT_MIN", 49152))
+    maximum = int(app.config.get("ROOM_PORT_MAX", 65535))
+    return random.randint(minimum, maximum)
 
 @cache_argsless
 def get_static_server_data() -> dict:
