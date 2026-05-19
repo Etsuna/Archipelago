@@ -182,10 +182,27 @@ class WebHostContext(Context):
         return d
 
 
-def get_random_port():
+def get_room_port_range() -> typing.Tuple[int, int]:
     minimum = int(app.config.get("ROOM_PORT_MIN", 49152))
     maximum = int(app.config.get("ROOM_PORT_MAX", 65535))
+    if minimum > maximum:
+        raise ValueError(f"ROOM_PORT_MIN ({minimum}) cannot be greater than ROOM_PORT_MAX ({maximum})")
+    return minimum, maximum
+
+
+def get_random_port():
+    minimum, maximum = get_room_port_range()
     return random.randint(minimum, maximum)
+
+
+def get_port_candidates(preferred_port: int) -> typing.List[int]:
+    minimum, maximum = get_room_port_range()
+    ports = list(range(minimum, maximum + 1))
+    random.shuffle(ports)
+    if minimum <= preferred_port <= maximum:
+        ports.remove(preferred_port)
+        ports.insert(0, preferred_port)
+    return ports
 
 @cache_argsless
 def get_static_server_data() -> dict:
@@ -249,11 +266,14 @@ def tear_down_logging(room_id):
 
 def run_server_process(name: str, ponyconfig: dict, static_server_data: dict,
                        cert_file: typing.Optional[str], cert_key_file: typing.Optional[str],
-                       host: str, rooms_to_run: multiprocessing.Queue, rooms_shutting_down: multiprocessing.Queue):
+                       host: str, rooms_to_run: multiprocessing.Queue, rooms_shutting_down: multiprocessing.Queue,
+                       room_port_min: int, room_port_max: int):
     from setproctitle import setproctitle
 
     setproctitle(name)
     Utils.init_logging(name)
+    app.config["ROOM_PORT_MIN"] = room_port_min
+    app.config["ROOM_PORT_MAX"] = room_port_max
     try:
         import resource
     except ModuleNotFoundError:
@@ -302,20 +322,24 @@ def run_server_process(name: str, ponyconfig: dict, static_server_data: dict,
                 ctx.load(room_id)
                 ctx.init_save()
                 assert ctx.server is None
-                try:
-                    ctx.server = websockets.serve(
-                        functools.partial(server, ctx=ctx),
-                        ctx.host,
-                        ctx.port,
-                        ssl=get_ssl_context(),
-                        extensions=[server_per_message_deflate_factory],
-                    )
-                    await ctx.server
-                except OSError:  # likely port in use
-                    ctx.server = websockets.serve(
-                        functools.partial(server, ctx=ctx), ctx.host, 0, ssl=get_ssl_context())
-
-                    await ctx.server
+                for port_candidate in get_port_candidates(ctx.port):
+                    ctx.port = port_candidate
+                    try:
+                        ctx.server = websockets.serve(
+                            functools.partial(server, ctx=ctx),
+                            ctx.host,
+                            ctx.port,
+                            ssl=get_ssl_context(),
+                            extensions=[server_per_message_deflate_factory],
+                        )
+                        await ctx.server
+                    except OSError:  # likely port in use
+                        ctx.server = None
+                    else:
+                        break
+                if ctx.server is None:
+                    minimum, maximum = get_room_port_range()
+                    raise OSError(f"No room ports available in configured range {minimum}-{maximum}.")
                 port = 0
                 for wssocket in ctx.server.ws_server.sockets:
                     socketname = wssocket.getsockname()
